@@ -1,0 +1,32 @@
+ # Load the data
+    # movies = pd.read_csv("data/movies.csv")
+
+    # # Create a dropdown menu for selecting a movie
+    # selected_movie = st.selectbox("Select a movie", movies["title"])
+
+    # # Display the selected movie
+    # st.write("You selected the movie:", selected_movie)
+
+    # # Display the movie's genres
+    # genres = movies[movies["title"] == selected_movie]["genres"].values[0]
+    # st.write("Genres:", genres)
+
+    # # Display the movie's poster
+    # poster = f"https://m.media-amazon.com/images/M/{movies[movies['title'] == selected_movie]['imdbId'].values[0]}.jpg"
+    # st.image(poster, caption=selected_movie, use_column_width=True)
+
+    # # Get the movie's index
+    # movie_index = movies[movies["title"] == selected_movie].index[0]
+
+    # # Load the similarity matrix
+    # similarity_matrix = np.load("data/similarity_matrix.npy")
+
+    # # Get the top 5 similar movies
+    # similar_movies = list(enumerate(similarity_matrix[movie_index]))
+    # similar_movies = sorted(similar_movies, key=lambda x: x[1], reverse=True)
+    # similar_movies = similar_movies[1:6]
+
+    # # Display the top 5 similar movies
+    # st.write("Top 5 similar movies:")
+    # for i, (movie, similarity) in enumerate(similar_movies):
+    #     st.write(f"{i + 1}. {movies.iloc[movie]['title']} (Similarity: {similarity:.2f})")
