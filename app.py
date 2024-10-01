@@ -1,141 +1,96 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
 import pymongo
 from sentence_transformers import SentenceTransformer
-import os
-# page layout
+
+# Page layout
 st.set_page_config(page_title="Movies Recommender System", page_icon="🎬", layout="wide")
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-model = SentenceTransformer('thenlper/gte-large', device = 'cpu')
 
-# Correct function to create embeddings for a chosen column in the dataframe
+# Initialize the SentenceTransformer model
+model = SentenceTransformer('thenlper/gte-large', device='cpu')
+
+# Function to create embeddings for a chosen column in the dataframe
 def create_embedding(df, chosen_column):
- 
-    #df['embedding'] = df[chosen_column].apply(lambda text: model.encode(text).tolist() if isinstance(text, str) and text.strip() else [])
-    st.sidebar.write (f'Quoc has chosen {chosen_column} and created embeddings')
-    #connect_mongodb()
+    # Create the embeddings for the specified column
+    embedding_column = chosen_column + '_embedding'
+    df[embedding_column] = df[chosen_column].apply(lambda text: model.encode(text).tolist() if isinstance(text, str) and text.strip() else [])
     
+    # Write the updated dataframe to CSV (for local testing)
+    #df.to_csv('test_output.csv', index=False)
+    st.sidebar.success(f"Embeddings created and saved for the column '{chosen_column}'!")
+    
+    # Debugging: Display the first few rows of the updated DataFrame
+    st.write("### DataFrame with Embeddings", df.head())
+    
+    return df  # Return the updated dataframe
 
-def main():
-    st.title("Movies Recommender System")
-    st.sidebar.title("Settings")
-    
-    # file upload
-    st.sidebar.subheader("Upload your own movie dataset")
-    uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-    if uploaded_file is not None:
-        movies = pd.read_csv(uploaded_file)
-        st.write(movies)
-        st.sidebar.subheader("List of all columns in the dataset")
-        chosen_column = st.sidebar.selectbox("Select a column", movies.columns.tolist())
-        st.sidebar.write(f"Chosen column: {chosen_column}")
-    else:
-        st.sidebar.write("Please upload a CSV file.")
-    
-    # button to create embeddings
-    if st.sidebar.button("Create Embeddings") and uploaded_file:
-        create_embedding(movies, chosen_column)
-    # button to connect to MongoDB
-    if st.sidebar.button("Upload to Vector DB") and uploaded_file:
-        connect_mongodb()
-        client = connect_mongodb()
-        
-        create_database(client, uploaded_file.name, uploaded_file.name+'_collection')
-        
-    # create a  credits button
-    credits =st.sidebar.button("Credits")
-    if credits:
-         st.sidebar.markdown("""
-        **Nguyen Huy Bao** - ITDSIU21076  
-        **Nguyen Nhat Khiem** - ITDSIU21091  
-        **Trinh Binh Gold** - ITDSIU21103
-        """)
-         
-    # chat input film plot
-    st.subheader("Let's find the movie you are looking for!")
-    film_plot = st.text_area("Enter a film plot")
-    if st.button("Submit"):
-        st.write("Buoi Xuan Quoc")
-         
-         
+# Function to connect to MongoDB
 def connect_mongodb():
-    # MongoDB credentials (replace these with your actual username and password)
-    username = "khim3"  # Replace with your MongoDB username
-    password = "RugewX0f7wVuaJ08"  # Replace with your MongoDB password
-
-    # MongoDB URI
+    # MongoDB credentials (replace with your actual username and password)
+    username = "khim3"
+    password = "RugewX0f7wVuaJ08"
     mongo_uri = f'mongodb+srv://{username}:{password}@cluster0.c6lq9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'
 
     # Attempt to connect to MongoDB
     try:
         client = pymongo.MongoClient(mongo_uri)
-        # Check if the connection is established by calling the 'server_info' method
-        client.server_info()  # This command will throw an exception if the connection is not established
-        st.sidebar.success("Successfully uploaded to MongoDB!")
+        client.server_info()  # Test connection
+        st.sidebar.success("Successfully connected to MongoDB!")
         return client
     except pymongo.errors.ConnectionFailure as e:
         st.sidebar.error(f"Failed to connect to MongoDB: {e}")
         return None
-    
+
+# Function to create or access a MongoDB database and collection
 def create_database(client, db_name, collection_name):
-    # Create a new database
     db = client[db_name]
-    # Create a new collection
     collection = db[collection_name]
-    st.sidebar.success(f"Successfully created a new database: '{db_name}' and collection: '{collection_name}'")
+    st.sidebar.success(f"Successfully created or accessed the database: '{db_name}' and collection: '{collection_name}'")
     return db, collection
 
-def vector_search(user_query, collection):
-    # Get the embedding for the user query
-    query_embedding = create_embedding(user_query)
-    if not query_embedding:
-        return 'Invalid query'
-    
-    vector_search_stage = {
-        "$vectorSearch": {
-            "index": "vector_index",
-            "queryVector": query_embedding,
-            'path': 'embedding',
-            'numCandidates': 50,
-            'limit': 3
-        }
-    }
-    
-    unset_stage = {
-        '$unset': 'embedding'
-    }
-    
-    project_stage = {
-        '$project': {
-            '_id': 0,
-            'fullplot': 1,
-            'title': 1,
-            'director': 1,
-            'countries': 1,
-            'genres': 1,
-            'score': {
-                '$meta': 'vectorSearchScore'
-                }
+def main():
+    # File upload section
+    st.sidebar.title("Settings")
+    st.sidebar.subheader("Upload your own movie dataset")
+    uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+
+    # Check if a file is uploaded
+    if uploaded_file:
+        # Read the uploaded file into a pandas DataFrame
+        df = pd.read_csv(uploaded_file)
+        st.write("### Uploaded Dataset", df)
+
+        # Display list of columns for selection
+        st.sidebar.subheader("List of All Columns in the Dataset")
+        chosen_column = st.sidebar.selectbox("Select a column for embedding", df.columns.tolist())
+        st.sidebar.write(f"Chosen column: {chosen_column}")
+
+        # Button to connect and upload to MongoDB
+        if st.sidebar.button("Process and Upload to MongoDB"):
+            df = create_embedding(df, chosen_column) 
             
-        }
-    }
-    
-    pipeline = [vector_search_stage, unset_stage, project_stage]
-    results = collection.aggregate(pipeline)
-    return list(results)
+            st.write("### Updated DataFrame with Embeddings", df.head())
+            client = connect_mongodb()
+            if client:
+                db, collection = create_database(client, 'test', 'test_collection')
+                collection.delete_many({})  # Clear existing data
+                st.write("### Data to be Uploaded to MongoDB", df.head())
 
+                # Upload the dataframe with embeddings to MongoDB
+                collection.insert_many(df.to_dict('records'))
+                st.sidebar.success("Data successfully uploaded to MongoDB!")
+                client.close()  # Close the connection
+    else:
+        st.sidebar.write("Please upload a CSV file.")
 
+    # Optional: Add additional functionality like searching or credits
+    credits = st.sidebar.button("Credits")
+    if credits:
+        st.sidebar.markdown("""
+        **Nguyen Huy Bao** - ITDSIU21076  
+        **Nguyen Nhat Khiem** - ITDSIU21091  
+        **Trinh Binh Gold** - ITDSIU21103
+        """)
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
