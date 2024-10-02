@@ -2,12 +2,15 @@ import streamlit as st
 import pandas as pd
 import pymongo
 from sentence_transformers import SentenceTransformer
+import torch
+torch.cuda.empty_cache()
 import os
+
 # Page layout
 st.set_page_config(page_title="Movies Recommender System", page_icon="🎬", layout="wide")
 
 # Initialize the SentenceTransformer model
-model = SentenceTransformer('thenlper/gte-large', device='cpu')
+model = SentenceTransformer('thenlper/gte-large', device='cuda')
 
 # Function to create embeddings for a chosen column in the dataframe
 def create_embedding(df, chosen_column):
@@ -15,8 +18,7 @@ def create_embedding(df, chosen_column):
     embedding_column = chosen_column + '_embedding'
     df[embedding_column] = df[chosen_column].apply(lambda text: model.encode(text).tolist() if isinstance(text, str) and text.strip() else [])
     
-    #df.to_csv('test_output.csv', index=False)
-    st.sidebar.success(f"Embeddings created and saved for the column '{chosen_column}'!")
+    st.sidebar.success(f"Embeddings created for the column '{chosen_column}'!")
         
     return df  # Return the updated dataframe
 
@@ -39,10 +41,25 @@ def connect_mongodb():
 
 # Function to create or access a MongoDB database and collection
 def create_database(client, db_name, collection_name):
-    db = client[db_name]
-    collection = db[collection_name]
-    st.sidebar.success(f"Successfully created or accessed the database: '{db_name}' and collection: '{collection_name}'")
+    # Check if the database exists
+    if db_name in client.list_database_names():
+        db = client[db_name]
+        # Check if the collection exists within the database
+        if collection_name in db.list_collection_names():
+            collection = db[collection_name]  # Assign the existing collection
+            st.sidebar.info(f"Using the existing database '{db_name}' and collection '{collection_name}'.")
+        else:
+            collection = db[collection_name]  # Create a new collection if it does not exist
+            st.sidebar.success(f"Successfully created a new collection: '{collection_name}' in the existing database '{db_name}'.")
+    else:
+        # Create a new database and collection
+        db = client[db_name]
+        collection = db[collection_name]
+        st.sidebar.success(f"Successfully created the new database: '{db_name}' and collection: '{collection_name}'.")
+
+    # Return the database and collection
     return db, collection
+
 
 def create_embedding_query(text: str) -> list[float]:
     if text is None or not text.strip():
@@ -67,7 +84,7 @@ def vector_search(user_query, collection):
     }
     
     unset_stage = {
-        '$unset': 'plot_embedding'
+        '$unset': 'fullplot_embedding'
     }
     
     project_stage = {
@@ -89,27 +106,47 @@ def vector_search(user_query, collection):
     results = collection.aggregate(pipeline)
     return list(results)
 
+
+def get_search_result(query, collection):
+    get_info = vector_search(query, collection)
+    search_result = ''
+    
+    for result in get_info:
+        search_result += f"Title: {result.get('title', 'N/A')}\n"
+        search_result += f"Countries: {result.get('countries', 'N/A')}\n"
+        search_result += f"Genres: {result.get('genres', 'N/A')}\n"
+        search_result += f"Plot: {result.get('fullplot', 'N/A')}\n"
+        score = result.get('score', None)
+        if score is not None:
+            search_result += f"Score: {score:.3f}\n\n"
+        else:
+            search_result += "Score: N/A\n"
+    
+    return search_result
+
 def main():
-    # title
+    chosen_column = None
+    # Title and description
     st.title("Movies Recommender System")
     st.write("### Welcome to the Movies Recommender System!")
-    # File upload section
+
+    # Sidebar settings
     st.sidebar.title("Settings")
     st.sidebar.subheader("Upload your own movie dataset")
-    user_query = st.text_input("Enter your query here", "")
-    # add search button
-    if st.button("Search") and user_query:
-        st.write("### Ta la Quoc")
     
+    # File upload section
     uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-
+    
     # Check if a file is uploaded
+    collection = None
     if uploaded_file:
         # Read the uploaded file into a pandas DataFrame
         df = pd.read_csv(uploaded_file)
-        st.write(df.head(10))
-        #get the uploaded file name
-        file_name=(os.path.splitext(uploaded_file.name)[0])
+        st.write("### Uploaded Dataset", df.head(10))
+
+        # Get the uploaded file name
+        file_name = os.path.splitext(uploaded_file.name)[0]
+
         # Display list of columns for selection
         st.sidebar.subheader("List of All Columns in the Dataset")
         chosen_column = st.sidebar.selectbox("Select a column for embedding", df.columns.tolist())
@@ -117,21 +154,30 @@ def main():
 
         # Button to connect and upload to MongoDB
         if st.sidebar.button("Process and Upload to MongoDB"):
-            df = create_embedding(df, chosen_column) 
+            df = create_embedding(df, chosen_column)  # Create embeddings for the chosen column
             
-            #st.write("### Updated DataFrame with Embeddings", df.head())
+            # Connect to MongoDB
             client = connect_mongodb()
             if client:
-                db, collection = create_database(client, file_name, file_name +'_collection')
+                db, collection = create_database(client, file_name, file_name + '_'+chosen_column +"_collection")
                 collection.delete_many({})  # Clear existing data
-               # st.write("### Data to be Uploaded to MongoDB", df.head())
 
                 # Upload the dataframe with embeddings to MongoDB
                 collection.insert_many(df.to_dict('records'))
                 st.sidebar.success("Data successfully uploaded to MongoDB!")
-               # client.close()  # Close the connection
-    else:
-        st.sidebar.write("Please upload a CSV file.")
+
+    # Text input for query
+    user_query = st.text_input("Enter your query here", "")
+    
+    # Search button
+    if st.button("Search") and user_query:
+        # Ensure the collection is defined before performing the search
+        if collection:
+            information = get_search_result(user_query, collection)
+            combined_info = f'### Query: {user_query}\n\n{information}'
+            st.write(combined_info)
+        else:
+            st.write("Please upload a dataset and process it before searching.")
 
     # Optional: Add additional functionality like searching or credits
     credits = st.sidebar.button("Credits")
