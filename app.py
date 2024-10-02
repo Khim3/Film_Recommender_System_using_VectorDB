@@ -3,9 +3,8 @@ import pandas as pd
 import pymongo
 from sentence_transformers import SentenceTransformer
 import torch
-torch.cuda.empty_cache()
 import os
-
+torch.cuda.empty_cache()
 # Page layout
 st.set_page_config(page_title="Movies Recommender System", page_icon="🎬", layout="wide")
 
@@ -127,8 +126,51 @@ def get_search_result(query, collection):
     
     return search_result
 
+
+# Function to create a search index with a specific configuration
+def create_search_index(client, db_name, collection_name, field_name, num_dimensions=1024, index_name='vector_index'):
+    """
+    Creates a search index with a vector configuration on the specified field in the collection.
+
+    Parameters:
+    - client: The MongoDB client connection.
+    - db_name: The database name.
+    - collection_name: The collection name.
+    - field_name: The name of the field to create the vector index on.
+    - num_dimensions: Number of dimensions of the vector. Default is 1024.
+    - index_name: The name of the index. Default is 'vector_index'.
+    """
+    # Connect to the specified database and collection
+    db = client[db_name]
+    collection = db[collection_name]
+
+    # Define the search index configuration
+    search_index_definition = {
+        "createIndexes": collection_name,
+        "indexes": [
+            {
+                "name": index_name,
+                "key": {
+                    field_name: "knnVector"
+                },
+                "vector": {
+                    "type": "cosine",
+                    "dimensions": num_dimensions
+                }
+            }
+        ]
+    }
+
+    # Attempt to create the search index using db.command()
+    try:
+        db.command(search_index_definition)  # Use db.command to create the index with the specified definition
+        st.sidebar.success(f"Successfully created a search index on the field '{field_name}' in collection '{collection_name}' with {num_dimensions} dimensions using cosine similarity.")
+    except Exception as e:
+        st.sidebar.error(f"An error occurred while creating the search index: {e}")
+        
 def main():
     chosen_column = None
+    collection = None
     # Title and description
     st.title("Movies Recommender System")
     st.write("### Welcome to the Movies Recommender System!")
@@ -141,7 +183,6 @@ def main():
     uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
     
     # Check if a file is uploaded
-    collection = None
     if uploaded_file:
         # Read the uploaded file into a pandas DataFrame
         df = pd.read_csv(uploaded_file)
@@ -149,11 +190,12 @@ def main():
 
         # Get the uploaded file name
         file_name = os.path.splitext(uploaded_file.name)[0]
-
         # Display list of columns for selection
         st.sidebar.subheader("List of All Columns in the Dataset")
         chosen_column = st.sidebar.selectbox("Select a column for embedding", df.columns.tolist())
         st.sidebar.write(f"Chosen column: {chosen_column}")
+        collection_name = file_name + '_' + chosen_column + "_collection"
+        field_name = chosen_column + '_embedding'
 
         # Button to connect and upload to MongoDB
         if st.sidebar.button("Process and Upload to MongoDB"):
@@ -172,21 +214,24 @@ def main():
                     # Upload the dataframe with embeddings to MongoDB
                     collection.insert_many(df.to_dict('records'))
                     st.sidebar.success("Data successfully uploaded to MongoDB!")
+                    create_search_index(client, db_name=file_name, collection_name=collection_name, field_name=field_name, num_dimensions=1024)
+                    st.sidebar.success("Data is fully processed and indexed.")
                 else:
                     st.sidebar.info(f"Collection '{file_name + '_' + chosen_column + "_collection"}' already exists. No data upload was performed.")
 
     # Text input for query
     user_query = st.text_input("Enter your query here", "")
-    
-    # Search button
-    if st.button("Search") and user_query:
-        # Ensure the collection is defined before performing the search
-        if collection:
-            information = get_search_result(user_query, collection)
-            combined_info = f'### Query: {user_query}\n\n{information}'
-            st.write(combined_info)
-        else:
-            st.write("Please upload a dataset and process it before searching.")
+    if user_query and st.button("Search"):
+        st.write(create_embedding_query(user_query))
+    # # Search button
+    # if st.button("Search") and user_query:
+    #     # Ensure the collection is defined before performing the search
+    #     if collection:
+    #         information = get_search_result(user_query, collection)
+    #         combined_info = f'### Query: {user_query}\n\n{information}'
+    #         st.write(combined_info)
+    #     else:
+    #         st.write("Please upload a dataset and process it before searching.")
 
     # Optional: Add additional functionality like searching or credits
     credits = st.sidebar.button("Credits")
