@@ -47,18 +47,21 @@ def create_database(client, db_name, collection_name):
         # Check if the collection exists within the database
         if collection_name in db.list_collection_names():
             collection = db[collection_name]  # Assign the existing collection
-            st.sidebar.info(f"Using the existing database '{db_name}' and collection '{collection_name}'.")
+            st.sidebar.info(f"Using the existing database '{db_name}' and collection '{collection_name}'. No data upload will be performed.")
+            upload_required = False
         else:
             collection = db[collection_name]  # Create a new collection if it does not exist
             st.sidebar.success(f"Successfully created a new collection: '{collection_name}' in the existing database '{db_name}'.")
+            upload_required = True
     else:
         # Create a new database and collection
         db = client[db_name]
         collection = db[collection_name]
         st.sidebar.success(f"Successfully created the new database: '{db_name}' and collection: '{collection_name}'.")
+        upload_required = True
 
-    # Return the database and collection
-    return db, collection
+    # Return the database, collection, and upload status
+    return db, collection, upload_required
 
 
 def create_embedding_query(text: str) -> list[float]:
@@ -159,12 +162,18 @@ def main():
             # Connect to MongoDB
             client = connect_mongodb()
             if client:
-                db, collection = create_database(client, file_name, file_name + '_'+chosen_column +"_collection")
-                collection.delete_many({})  # Clear existing data
+                # Create the database and collection or use existing ones
+                db, collection, upload_required = create_database(client, file_name, file_name + '_' + chosen_column + "_collection")
 
-                # Upload the dataframe with embeddings to MongoDB
-                collection.insert_many(df.to_dict('records'))
-                st.sidebar.success("Data successfully uploaded to MongoDB!")
+                if upload_required:
+                    # Clear any existing data in the new collection (if it exists)
+                    collection.delete_many({})
+
+                    # Upload the dataframe with embeddings to MongoDB
+                    collection.insert_many(df.to_dict('records'))
+                    st.sidebar.success("Data successfully uploaded to MongoDB!")
+                else:
+                    st.sidebar.info(f"Collection '{file_name + '_' + chosen_column + "_collection"}' already exists. No data upload was performed.")
 
     # Text input for query
     user_query = st.text_input("Enter your query here", "")
