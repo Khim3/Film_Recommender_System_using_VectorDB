@@ -4,21 +4,23 @@ import pymongo
 from sentence_transformers import SentenceTransformer
 import torch
 import os
+from pymongo.mongo_client import MongoClient
+from pymongo.operations import SearchIndexModel
+
 torch.cuda.empty_cache()
+
 # Page layout
 st.set_page_config(page_title="Movies Recommender System", page_icon="🎬", layout="wide")
 
 # Initialize the SentenceTransformer model
-model = SentenceTransformer('thenlper/gte-large', device='cuda')
+model = SentenceTransformer('thenlper/gte-large')
 
 # Function to create embeddings for a chosen column in the dataframe
 def create_embedding(df, chosen_column):
     # Create the embeddings for the specified column
     embedding_column = chosen_column + '_embedding'
     df[embedding_column] = df[chosen_column].apply(lambda text: model.encode(text).tolist() if isinstance(text, str) and text.strip() else [])
-    
     st.sidebar.success(f"Embeddings created for the column '{chosen_column}'!")
-        
     return df  # Return the updated dataframe
 
 # Function to connect to MongoDB
@@ -62,53 +64,67 @@ def create_database(client, db_name, collection_name):
     # Return the database, collection, and upload status
     return db, collection, upload_required
 
+# Function to create a search index with a specific configuration
+def create_search_index(client, db_name, collection_name, field_name, num_dimensions=1024):
+    try:
+        # Access the database and collection
+        database = client[db_name]
+        collection = database[collection_name]
 
+        # Create the search index model with vector configuration
+        search_index_model = SearchIndexModel(
+            definition={
+                "mappings": {
+                    "fields": {
+                        field_name: {
+                            "type": "knnVector",  # Type for vector search
+                            "similarity": "cosine",  # Use cosine similarity
+                            "dimensions": num_dimensions  # Number of dimensions in the vector
+                        }
+                    }
+                }
+            },
+            name="vector_search_index",
+        )
+
+        # Create the search index
+        result = collection.create_search_index(model=search_index_model)
+        st.sidebar.success(f"Vector search index created successfully: {result}")
+
+    except Exception as e:
+        st.sidebar.error(f"Failed to create search index: {e}")
+
+# Function to create an embedding for a text query
 def create_embedding_query(text: str) -> list[float]:
     if text is None or not text.strip():
         return []
     embedding = model.encode(text)
     return embedding.tolist()
 
+# Function to perform vector search in MongoDB
 def vector_search(user_query, collection):
     # Get the embedding for the user query
     query_embedding = create_embedding_query(user_query)
     if not query_embedding:
         return 'Invalid query'
     
+    # Vector search query
     vector_search_stage = {
         "$vectorSearch": {
-            "index": "vector_index",
+            "index": "vector_search_index",
             "queryVector": query_embedding,
-            'path': 'plot_embedding',
+            'path': 'fullplot_embedding',
             'numCandidates': 50,
             'limit': 3
         }
     }
     
-    unset_stage = {
-        '$unset': 'fullplot_embedding'
-    }
-    
-    project_stage = {
-        '$project': {
-            '_id': 0,
-            'fullplot': 1,
-            'title': 1,
-            'director': 1,
-            'countries': 1,
-            'genres': 1,
-            'score': {
-                '$meta': 'vectorSearchScore'
-                }
-            
-        }
-    }
-    
-    pipeline = [vector_search_stage, unset_stage, project_stage]
+    # Pipeline stages for vector search
+    pipeline = [vector_search_stage]
     results = collection.aggregate(pipeline)
     return list(results)
 
-
+# Function to display search results
 def get_search_result(query, collection):
     get_info = vector_search(query, collection)
     search_result = ''
@@ -126,48 +142,7 @@ def get_search_result(query, collection):
     
     return search_result
 
-
-# Function to create a search index with a specific configuration
-def create_search_index(client, db_name, collection_name, field_name, num_dimensions=1024, index_name='vector_index'):
-    """
-    Creates a search index with a vector configuration on the specified field in the collection.
-
-    Parameters:
-    - client: The MongoDB client connection.
-    - db_name: The database name.
-    - collection_name: The collection name.
-    - field_name: The name of the field to create the vector index on.
-    - num_dimensions: Number of dimensions of the vector. Default is 1024.
-    - index_name: The name of the index. Default is 'vector_index'.
-    """
-    # Connect to the specified database and collection
-    db = client[db_name]
-    collection = db[collection_name]
-
-    # Define the search index configuration
-    search_index_definition = {
-        "createIndexes": collection_name,
-        "indexes": [
-            {
-                "name": index_name,
-                "key": {
-                    field_name: "knnVector"
-                },
-                "vector": {
-                    "type": "cosine",
-                    "dimensions": num_dimensions
-                }
-            }
-        ]
-    }
-
-    # Attempt to create the search index using db.command()
-    try:
-        db.command(search_index_definition)  # Use db.command to create the index with the specified definition
-        st.sidebar.success(f"Successfully created a search index on the field '{field_name}' in collection '{collection_name}' with {num_dimensions} dimensions using cosine similarity.")
-    except Exception as e:
-        st.sidebar.error(f"An error occurred while creating the search index: {e}")
-        
+# Main function for Streamlit app
 def main():
     chosen_column = None
     collection = None
@@ -205,7 +180,7 @@ def main():
             client = connect_mongodb()
             if client:
                 # Create the database and collection or use existing ones
-                db, collection, upload_required = create_database(client, file_name, file_name + '_' + chosen_column + "_collection")
+                db, collection, upload_required = create_database(client, file_name, collection_name)
 
                 if upload_required:
                     # Clear any existing data in the new collection (if it exists)
@@ -214,24 +189,24 @@ def main():
                     # Upload the dataframe with embeddings to MongoDB
                     collection.insert_many(df.to_dict('records'))
                     st.sidebar.success("Data successfully uploaded to MongoDB!")
+
+                    # Create a search index for the specified field
                     create_search_index(client, db_name=file_name, collection_name=collection_name, field_name=field_name, num_dimensions=1024)
                     st.sidebar.success("Data is fully processed and indexed.")
                 else:
-                    st.sidebar.info(f"Collection '{file_name + '_' + chosen_column + "_collection"}' already exists. No data upload was performed.")
+                    st.sidebar.info(f"Collection '{collection_name}' already exists. No data upload was performed.")
 
     # Text input for query
     user_query = st.text_input("Enter your query here", "")
+    # Search button
     if user_query and st.button("Search"):
-        st.write(create_embedding_query(user_query))
-    # # Search button
-    # if st.button("Search") and user_query:
-    #     # Ensure the collection is defined before performing the search
-    #     if collection:
-    #         information = get_search_result(user_query, collection)
-    #         combined_info = f'### Query: {user_query}\n\n{information}'
-    #         st.write(combined_info)
-    #     else:
-    #         st.write("Please upload a dataset and process it before searching.")
+        # Ensure the collection is defined before performing the search
+        if collection:
+            information = get_search_result(user_query, collection)
+            combined_info = f'### Query: {user_query}\n\n{information}'
+            st.write(combined_info)
+        else:
+            st.write("Please upload a dataset and process it before searching.")
 
     # Optional: Add additional functionality like searching or credits
     credits = st.sidebar.button("Credits")
