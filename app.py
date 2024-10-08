@@ -6,7 +6,7 @@ import torch
 import os
 from pymongo.mongo_client import MongoClient
 from pymongo.operations import SearchIndexModel
-
+from pymongo.errors import DuplicateKeyError
 torch.cuda.empty_cache()
 
 # Page layout
@@ -34,7 +34,7 @@ def connect_mongodb():
     try:
         client = pymongo.MongoClient(mongo_uri)
         client.server_info()  # Test connection
-        st.sidebar.success("Successfully connected to MongoDB!")
+        #st.sidebar.success("Successfully connected to MongoDB!")
         return client
     except pymongo.errors.ConnectionFailure as e:
         st.sidebar.error(f"Failed to connect to MongoDB: {e}")
@@ -74,55 +74,66 @@ def create_search_index(client, db_name, collection_name, field_name, num_dimens
         # Create the search index model with vector configuration
         search_index_model = SearchIndexModel(
             definition={
-                "mappings": {
-                    "fields": {
-                        field_name: {
-                            "type": "knnVector",  # Type for vector search
-                            "similarity": "cosine",  # Use cosine similarity
-                            "dimensions": num_dimensions  # Number of dimensions in the vector
-                        }
+                "fields": [
+                    {
+                        "type": "vector",             # Use "vector" type for vector search index
+                        "numDimensions": num_dimensions,  # Number of dimensions in the vector
+                        "path": field_name,           # Path of the field in the document to index
+                        "similarity": "cosine"        # Similarity measure for vector search (cosine, euclidean, or dotProduct)
                     }
-                }
+                ]
             },
-            name="vector_search_index",
+            name="vector_search_index",              # Name of the vector search index
+            type="vectorSearch"                      # Specify the type as "vectorSearch"
         )
 
-        # Create the search index
+        # Create the search index in the collection
         result = collection.create_search_index(model=search_index_model)
-        st.sidebar.success(f"Vector search index created successfully: {result}")
+        st.sidebar.success(f"Vector search index created successfully with result: {result}")
 
     except Exception as e:
-        st.sidebar.error(f"Failed to create search index: {e}")
+        st.sidebar.error(f"Failed to create vector search index: {e}")
 
 # Function to create an embedding for a text query
 def create_embedding_query(text: str) -> list[float]:
-    if text is None or not text.strip():
+    if not text or not text.strip():
         return []
-    embedding = model.encode(text)
-    return embedding.tolist()
-
+    try:
+        embedding = model.encode(text)
+        return embedding.tolist()
+    except Exception as e:
+        st.error(f"Error creating embedding: {e}")
+        return []
+    
 # Function to perform vector search in MongoDB
-def vector_search(user_query, collection):
+def vector_search(user_query, collection, field_name):
     # Get the embedding for the user query
     query_embedding = create_embedding_query(user_query)
     if not query_embedding:
         return 'Invalid query'
     
-    # Vector search query
+    # Vector search query with dynamic path based on field_name
     vector_search_stage = {
         "$vectorSearch": {
-            "index": "vector_search_index",
+            "index": "vector_search_index",  # Ensure this matches the created search index name
             "queryVector": query_embedding,
-            'path': 'fullplot_embedding',
-            'numCandidates': 50,
-            'limit': 3
+            "path": field_name,  # Use the dynamic field name
+            "numCandidates": 10,
+            "limit": 5
         }
     }
     
-    # Pipeline stages for vector search
+    # Build the aggregation pipeline
     pipeline = [vector_search_stage]
-    results = collection.aggregate(pipeline)
-    return list(results)
+
+    try:
+        # Execute the pipeline against the collection
+        results = collection.aggregate(pipeline)
+        return list(results)
+    except Exception as e:
+        st.error(f"Failed to execute vector search: {e}")
+        return []
+
 
 # Function to display search results
 def get_search_result(query, collection):
@@ -175,7 +186,7 @@ def main():
         # Button to connect and upload to MongoDB
         if st.sidebar.button("Process and Upload to MongoDB"):
             df = create_embedding(df, chosen_column)  # Create embeddings for the chosen column
-            
+
             # Connect to MongoDB
             client = connect_mongodb()
             if client:
@@ -185,16 +196,13 @@ def main():
                 if upload_required:
                     # Clear any existing data in the new collection (if it exists)
                     collection.delete_many({})
-
                     # Upload the dataframe with embeddings to MongoDB
                     collection.insert_many(df.to_dict('records'))
                     st.sidebar.success("Data successfully uploaded to MongoDB!")
 
-                    # Create a search index for the specified field
-                    create_search_index(client, db_name=file_name, collection_name=collection_name, field_name=field_name, num_dimensions=1024)
-                    st.sidebar.success("Data is fully processed and indexed.")
-                else:
-                    st.sidebar.info(f"Collection '{collection_name}' already exists. No data upload was performed.")
+                # Check if the index already exists before creating a new one
+                create_search_index(client, db_name=file_name, collection_name=collection_name, field_name=field_name, num_dimensions=1024)
+
 
     # Text input for query
     user_query = st.text_input("Enter your query here", "")
