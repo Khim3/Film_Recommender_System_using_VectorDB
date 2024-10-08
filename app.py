@@ -6,7 +6,6 @@ import torch
 import os
 from pymongo.mongo_client import MongoClient
 from pymongo.operations import SearchIndexModel
-from pymongo.errors import DuplicateKeyError
 torch.cuda.empty_cache()
 
 # Page layout
@@ -20,7 +19,7 @@ def create_embedding(df, chosen_column):
     # Create the embeddings for the specified column
     embedding_column = chosen_column + '_embedding'
     df[embedding_column] = df[chosen_column].apply(lambda text: model.encode(text).tolist() if isinstance(text, str) and text.strip() else [])
-    st.sidebar.success(f"Embeddings created for the column '{chosen_column}'!")
+   # st.sidebar.success(f"Embeddings created for the column '{chosen_column}'!")
     return df  # Return the updated dataframe
 
 # Function to connect to MongoDB
@@ -89,10 +88,10 @@ def create_search_index(client, db_name, collection_name, field_name, num_dimens
 
         # Create the search index in the collection
         result = collection.create_search_index(model=search_index_model)
-        st.sidebar.success(f"Vector search index created successfully with result: {result}")
+       # st.sidebar.success(f"Vector search index created successfully with result: {result}")
 
     except Exception as e:
-        st.sidebar.error(f"Failed to create vector search index: {e}")
+        st.sidebar.info(f"Search index already exists")
 
 # Function to create an embedding for a text query
 def create_embedding_query(text: str) -> list[float]:
