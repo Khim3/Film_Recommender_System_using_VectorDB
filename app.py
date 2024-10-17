@@ -73,7 +73,7 @@ def create_search_index(client, db_name, collection_name, field_name, num_dimens
         result = collection.create_search_index(model=search_index_model)
         st.sidebar.success("Search index created successfully!")
     except Exception as e:
-        st.sidebar.info(f"Search index already exists or could not be created: {e}")
+        st.sidebar.info(f"Search index already exists !!")
 
 # Function to create an embedding for a text query
 def create_embedding_query(text: str) -> list[float]:
@@ -127,7 +127,7 @@ def vector_search(user_query, collection: Collection, field):
         results = collection.aggregate(pipeline)
         return list(results)
     except Exception as e:
-        st.error(f"Failed to execute vector search: {e}")
+        st.error(f"Search index already exists!!")
         return []
 
 # Function to display search results
@@ -153,6 +153,21 @@ def get_search_result(query, collection, field):
         search_result = "No results found or query invalid."
     
     return search_result
+
+def display_search_results(results):
+    for result in results:
+        st.write(f"**Title:** {result.get('title', 'N/A')}")
+        st.write(f"**Countries:** {result.get('countries', 'N/A')}")
+        st.write(f"**Genres:** {result.get('genres', 'N/A')}")
+        st.write(f"**Plot:** {result.get('fullplot', 'N/A')}")
+
+        score = result.get('score', None)
+        if score is not None:
+            st.write(f"**Score:** {score:.3f}")
+        else:
+            st.write("**Score:** N/A")
+
+        st.write("---")
 
 # Main function for Streamlit app
 def main():
@@ -205,9 +220,13 @@ def main():
 
     # Ensure collection is defined before performing the search
     if user_query and collection is not None and st.button("Search"):
-        information = get_search_result(user_query, collection, field_name)
-        combined_info = f'### Query: {user_query}\n\n{information}'
-        st.write(combined_info)
+        results = vector_search(user_query, collection, field_name)
+        if results:
+            display_search_results(results)
+    #  if user_query and collection is not None and st.button("Search"):
+    #     information = get_search_result(user_query, collection, field_name)
+    #     combined_info = f'### Query: {user_query}\n\n{information}'
+    #     st.write(combined_info)
 
     if st.sidebar.button("Credits"):
         st.sidebar.markdown("""
