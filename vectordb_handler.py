@@ -3,6 +3,7 @@ from pymongo.operations import SearchIndexModel
 from pymongo.collection import Collection
 import pymongo
 from utils import *
+
 # Function to connect to MongoDB
 def connect_mongodb():
     username = "khim3"
@@ -68,8 +69,8 @@ def vector_search(user_query, collection: Collection, field):
             "index": "vector_search_index",
             "queryVector": query_embedding,
             "path": field,
-            "numCandidates": 10,
-            "limit": 5
+            "numCandidates":25,
+            'limit': 20
         }    
     }
     unset_stage = {
