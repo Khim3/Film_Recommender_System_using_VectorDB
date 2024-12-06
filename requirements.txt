@@ -1,0 +1,5 @@
+streamlit==1.39.0
+pandas==2.2.3
+torch==2.4.0+cu121
+ollama==0.3.3
+pymongo==4.9
